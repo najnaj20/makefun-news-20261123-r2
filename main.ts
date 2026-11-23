@@ -1,31 +1,63 @@
-// News-image entry for make.fun "Sum up 23 November's world news in one image".
-// The image is entry.png beside this file, drawn by render.py in this
-// session from 30 verified 23 November 2026 stories. This program copies it to
-// the grader's output directory. Node 22, standard library only, no network.
+// Driver for the news-image entry: copies the pre-rendered front page
+// (entry.png, sitting next to this script) into the harness output dir.
 //
-// Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
-//   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
+// The image itself is produced offline by render.py; this script only
+// validates it and hands it over, so the graded run is deterministic.
 
-import { copyFileSync, mkdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const outDir = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
-mkdirSync(outDir, { recursive: true });
+// First eight bytes of every PNG file.
+const PNG_SIGNATURE = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+]);
 
-// Validate the image before copying: it must be a whole PNG of at most
-// 1 MiB, the limits the bounty gate checks. Fail loudly instead of
-// writing a file the gate would refuse.
-const src = new URL('./entry.png', import.meta.url);
-const bytes = readFileSync(src);
-const pngMagic = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-if (!bytes.subarray(0, 8).equals(pngMagic)) {
-  throw new Error('entry.png is not a PNG file');
+// Bounty cap on the submitted image.
+const MAX_IMAGE_BYTES = 1024 * 1024;
+
+function abort(reason: string): never {
+  console.error(`entry driver: ${reason}`);
+  process.exit(1);
 }
-if (bytes.length > 1048576) {
-  throw new Error(`entry.png is ${bytes.length} bytes, over the 1 MiB limit`);
+
+function fingerprint(data: Buffer): string {
+  return createHash("sha256").update(data).digest("hex");
 }
-copyFileSync(src, join(outDir, 'entry.png'));
-const written = statSync(join(outDir, 'entry.png'));
-if (written.size !== bytes.length) {
-  throw new Error('entry.png was not copied completely');
+
+function main(): void {
+  const folder = dirname(fileURLToPath(import.meta.url));
+  const source = join(folder, "entry.png");
+
+  if (!existsSync(source)) {
+    abort(`cannot find ${source}`);
+  }
+
+  const image = readFileSync(source);
+
+  if (image.length > MAX_IMAGE_BYTES) {
+    abort(
+      `entry.png is ${image.length} bytes, above the ${MAX_IMAGE_BYTES} byte limit`,
+    );
+  }
+
+  if (!image.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) {
+    abort("entry.png does not begin with the PNG signature");
+  }
+
+  const outDir = process.env.MAKEFUN_OUTPUT_DIR;
+  const destination = outDir
+    ? join(outDir, "entry.png")
+    : "/output/entry.png";
+
+  mkdirSync(dirname(destination), { recursive: true });
+  writeFileSync(destination, image);
+
+  console.log(
+    `entry driver: wrote ${image.length} bytes to ${destination} ` +
+      `(sha256 ${fingerprint(image)})`,
+  );
 }
+
+main();
